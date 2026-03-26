@@ -11,68 +11,22 @@ x-shared:
       POSTGRESQL_OPTIONS: ${POSTGRESQL_OPTIONS:-?pool=50}
       POSTGRESQL_DB_CREATE:
 
-      # Redis standalone
       REDIS_URL: ${REDIS_URL:-redis://zammad-redis:6379}
-      # Redis sentinel
-      REDIS_SENTINELS:
-      REDIS_SENTINEL_NAME:
-      REDIS_USERNAME:
-      REDIS_PASSWORD:
-      REDIS_SENTINEL_USERNAME:
-      REDIS_SENTINEL_PASSWORD:
 
-      S3_URL:
-      # Backup settings
-      BACKUP_DIR: "${BACKUP_DIR:-/var/tmp/zammad}"
-      BACKUP_TIME: "${BACKUP_TIME:-03:00}"
-      HOLD_DAYS: "${HOLD_DAYS:-10}"
-      TZ: "${TZ:-Europe/Berlin}"
-      # Allow passing in these variables via .env:
-      AUTOWIZARD_JSON:
-      AUTOWIZARD_RELATIVE_PATH:
-      ELASTICSEARCH_ENABLED:
-      ELASTICSEARCH_SCHEMA:
-      ELASTICSEARCH_HOST:
-      ELASTICSEARCH_PORT:
-      ELASTICSEARCH_USER:
-      ELASTICSEARCH_PASS:
-      ELASTICSEARCH_NAMESPACE:
-      ELASTICSEARCH_REINDEX:
-      NGINX_PORT:
-      NGINX_CLIENT_MAX_BODY_SIZE:
-      NGINX_SERVER_NAME:
-      NGINX_SERVER_SCHEME:
-      RAILS_TRUSTED_PROXIES:
-      ZAMMAD_HTTP_TYPE:
-      ZAMMAD_FQDN:
-      ZAMMAD_WEB_CONCURRENCY:
-      ZAMMAD_MANAGE_SESSIONS_JOBS_WORKERS:
-      ZAMMAD_PROCESS_SESSIONS_JOBS_WORKERS:
-      ZAMMAD_PROCESS_SCHEDULED_JOBS_WORKERS:
-      ZAMMAD_PROCESS_DELAYED_JOBS_WORKERS:
-      ZAMMAD_PROCESS_DELAYED_JOBS_WORKER_THREADS:
-      ZAMMAD_PROCESS_DELAYED_AI_JOBS_WORKERS:
-      ZAMMAD_PROCESS_DELAYED_AI_JOBS_WORKER_THREADS:
-      ZAMMAD_PROCESS_DELAYED_COMMUNICATION_INBOUND_JOBS_WORKERS:
-      ZAMMAD_PROCESS_DELAYED_COMMUNICATION_INBOUND_JOBS_WORKER_THREADS:
-      ZAMMAD_OTRS_IMPORT_READ_TIMEOUT:
-      ZAMMAD_OTRS_IMPORT_TOTAL_TIMEOUT:
+      # Configuración para Traefik / HTTPS
+      ZAMMAD_FQDN: helpdesk.rbnetto.dev
+      ZAMMAD_HTTP_TYPE: https
+      NGINX_SERVER_NAME: helpdesk.rbnetto.dev
+      NGINX_SERVER_SCHEME: https
+      RAILS_TRUSTED_PROXIES: 172.16.0.0/12, 10.0.0.0/8, 192.168.0.0/16
 
-      # ZAMMAD_SESSION_JOBS_CONCURRENT is deprecated, please use ZAMMAD_PROCESS_SESSIONS_JOBS_WORKERS instead.
-      ZAMMAD_SESSION_JOBS_CONCURRENT:
-      # Variables used by ngingx-proxy container for reverse proxy creations
-      # for docs refer to https://github.com/nginx-proxy/nginx-proxy
-      VIRTUAL_HOST:
-      VIRTUAL_PORT:
-      # Variables used by acme-companion for retrieval of LetsEncrypt certificate
-      # for docs refer to https://github.com/nginx-proxy/acme-companion
-      LETSENCRYPT_HOST:
-      LETSENCRYPT_EMAIL:
+      TZ: "America/Asuncion"
+      # Otras variables que necesites...
 
     image: ${IMAGE_REPO:-ghcr.io/zammad/zammad}:${VERSION:-7.0.0-0042}
     restart: ${RESTART:-always}
     volumes:
-      - zammad-backup:/var/tmp/zammad:ro  # needed for waiting on restore operations
+      - zammad-backup:/var/tmp/zammad:ro
       - zammad-storage:/opt/zammad/storage
     depends_on:
       - zammad-memcached
@@ -115,9 +69,28 @@ services:
     <<: *zammad-service
     command: ["zammad-nginx"]
     expose:
-      - "${NGINX_PORT:-8080}"
-    ports:
-      - "${NGINX_EXPOSE_PORT:-8080}:${NGINX_PORT:-8080}"
+      - "8080"
+    networks:
+      - default
+      - traefik_proxy
+    labels:
+      - traefik.enable=true
+      - traefik.docker.network=traefik_proxy
+
+      # Router HTTPS
+      - traefik.http.routers.zammad.rule=Host(`helpdesk.rbnetto.dev`)
+      - traefik.http.routers.zammad.entrypoints=websecure
+      - traefik.http.routers.zammad.tls.certresolver=letsencrypt
+
+      # Puerto interno de Zammad Nginx es 8080
+      - traefik.http.services.zammad.loadbalancer.server.port=8080
+
+      # Redirect HTTP -> HTTPS (Middleware único)
+      - traefik.http.routers.zammad-http.rule=Host(`helpdesk.rbnetto.dev`)
+      - traefik.http.routers.zammad-http.entrypoints=web
+      - traefik.http.routers.zammad-http.middlewares=zammad-redirect
+      - traefik.http.middlewares.zammad-redirect.redirectscheme.scheme=https
+
     depends_on:
       - zammad-railsserver
 
@@ -148,6 +121,12 @@ services:
   zammad-websocket:
     <<: *zammad-service
     command: ["zammad-websocket"]
+
+networks:
+  default:
+    driver: bridge
+  traefik_proxy:
+    external: true
 
 volumes:
   elasticsearch-data:
